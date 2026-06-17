@@ -1,36 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Toko Buah WhatsApp AI Bot
 
-## Getting Started
+Bot WhatsApp AI berbasis Next.js, OpenRouter, dan KirimDev. Aplikasi ini menerima webhook inbound dari KirimDev, membuat balasan AI, lalu mengirim pesan balik memakai nomor WhatsApp yang terhubung di KirimDev.
 
-First, run the development server:
+## Setup
+
+1. Salin `.env.local.example` menjadi `.env.local`.
+2. Isi variabel berikut:
+
+```env
+OPENROUTER_API_KEY="..."
+OPENROUTER_MODEL="openai/gpt-4o-mini"
+
+KIRIMDEV_API_KEY="..."
+KIRIMDEV_PHONE_NUMBER_ID="..."
+KIRIMDEV_API_BASE="https://api.kirimdev.com"
+KIRIMDEV_WEBHOOK_SECRET="..."
+KIRIMDEV_WEBHOOK_SECRET_ROTATING=""
+
+NEXT_PUBLIC_APP_URL="http://localhost:3000"
+```
+
+3. Jalankan server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+4. Untuk menerima chat dari WhatsApp, buat URL publik HTTPS ke server lokal, misalnya dengan ngrok atau Cloudflare Tunnel.
+5. Buat webhook subscription di KirimDev ke URL:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```text
+https://domain-publik-kamu/api/webhook
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Pilih minimal event:
 
-## Learn More
+```text
+message.received
+message.status
+```
 
-To learn more about Next.js, take a look at the following resources:
+6. Simpan `initial_secret` dari response subscription ke `KIRIMDEV_WEBHOOK_SECRET`.
+7. Kirim pesan WhatsApp ke nomor yang sudah terhubung di KirimDev.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Endpoint
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `GET /api/webhook` health check.
+- `POST /api/webhook` menerima event KirimDev.
+- `POST /api/test-chat` mengetes balasan AI tanpa WhatsApp.
+- `POST /api/webhook/debug` menangkap payload terakhir untuk debugging.
 
-## Deploy on Vercel
+## Catatan keamanan
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+KirimDev menandatangani webhook dengan header `X-Kirim-Signature`. Jika `KIRIMDEV_WEBHOOK_SECRET` diisi, aplikasi akan menolak payload dengan signature yang tidak valid.

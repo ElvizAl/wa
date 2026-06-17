@@ -1,7 +1,32 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { sendWhatsAppText } from "@/app/lib/kirimdev";
+import { verifyKirimSignature } from "@/app/lib/kirimdev-signature";
 import { askOpenRouter } from "@/app/lib/openrouter";
 import { getProductByName, getStockSummary, products } from "@/app/lib/products";
+
+export const runtime = "nodejs";
+
+type MetaTextMessage = {
+  id?: string;
+  from?: string;
+  type?: string;
+  text?: {
+    body?: string;
+  };
+};
+
+type MetaWebhookPayload = {
+  entry?: Array<{
+    changes?: Array<{
+      value?: {
+        metadata?: {
+          phone_number_id?: string;
+        };
+        messages?: MetaTextMessage[];
+      };
+    }>;
+  }>;
+};
 
 // Simple in-memory dedupe cache for X-Kirim-Event-Id.
 // In production with multiple instances, use Redis or a database.
@@ -19,14 +44,30 @@ function isDuplicate(eventId: string | null): boolean {
   return false;
 }
 
+function getWebhookSecrets() {
+  return [
+    process.env.KIRIMDEV_WEBHOOK_SECRET,
+    process.env.KIRIMDEV_WEBHOOK_SECRET_ROTATING,
+  ].filter((secret): secret is string => Boolean(secret));
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const rawBody = await req.text();
     const eventId = req.headers.get("x-kirim-event-id");
     const eventType = req.headers.get("x-kirim-event");
     const source = req.headers.get("x-kirim-source");
+    const signature = req.headers.get("x-kirim-signature");
 
     console.log("[Webhook] Received:", { eventId, eventType, source });
+
+    const secrets = getWebhookSecrets();
+    if (secrets.length > 0 && !verifyKirimSignature(rawBody, signature, secrets)) {
+      console.warn("[Webhook] Invalid KirimDev signature");
+      return NextResponse.json({ ok: false, error: "invalid-signature" }, { status: 401 });
+    }
+
+    const body = JSON.parse(rawBody) as MetaWebhookPayload;
 
     if (isDuplicate(eventId)) {
       console.log(`[Webhook] Duplicate event skipped: ${eventId}`);
@@ -55,7 +96,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-function handleMetaMessage(body: any) {
+function handleMetaMessage(body: MetaWebhookPayload) {
   const entry = body.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
@@ -66,11 +107,11 @@ function handleMetaMessage(body: any) {
   }
 
   const metadata = value?.metadata || {};
-  const phoneNumberId = metadata.phone_number_id as string | undefined;
+  const phoneNumberId = metadata.phone_number_id;
 
   const message = messages[0];
-  const from = message.from as string;
-  const type = message.type as string;
+  const from = message.from;
+  const type = message.type;
 
   if (!from) {
     return NextResponse.json({ ok: true, message: "No sender" });
@@ -81,21 +122,27 @@ function handleMetaMessage(body: any) {
     return NextResponse.json({ ok: true, message: "Unsupported message type" });
   }
 
-  const userText = message.text.body as string;
+  const userText = message.text.body;
   console.log(`[Webhook] Message from ${from}: ${userText}`);
 
-  // Fire-and-forget reply so we can return 200 quickly (KirimDev timeout is 10s)
-  processReply(from, userText, phoneNumberId).catch((err) =>
-    console.error("[Webhook] Failed to send reply:", err)
-  );
+  after(() => {
+    processReply(from, userText, phoneNumberId, message.id).catch((err) =>
+      console.error("[Webhook] Failed to send reply:", err)
+    );
+  });
 
   return NextResponse.json({ ok: true, message: "reply-queued" });
 }
 
-async function processReply(from: string, userText: string, phoneNumberId?: string) {
+async function processReply(
+  from: string,
+  userText: string,
+  phoneNumberId?: string,
+  inboundMessageId?: string
+) {
   const reply = await generateReply(userText);
   console.log(`[Webhook] Reply: ${reply}`);
-  await sendWhatsAppText(from, reply, phoneNumberId);
+  await sendWhatsAppText(from, reply, phoneNumberId, inboundMessageId);
 }
 
 async function generateReply(userText: string): Promise<string> {
@@ -142,6 +189,6 @@ function findProductInText(text: string) {
 }
 
 // Health check / webhook verification endpoint
-export async function GET(req: NextRequest) {
+export async function GET() {
   return NextResponse.json({ ok: true, message: "Webhook endpoint aktif" });
 }

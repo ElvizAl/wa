@@ -1,16 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 export default function Home() {
   const [message, setMessage] = useState("");
   const [reply, setReply] = useState("");
   const [loading, setLoading] = useState(false);
-  const [webhookUrl, setWebhookUrl] = useState("/api/webhook");
-
-  useEffect(() => {
-    setWebhookUrl(`${window.location.origin}/api/webhook`);
-  }, []);
+  const webhookUrl =
+    typeof window === "undefined" ? "/api/webhook" : `${window.location.origin}/api/webhook`;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -43,7 +40,9 @@ export default function Home() {
 
         <div className="mb-6 rounded-lg bg-green-50 p-4 text-sm text-green-800">
           <p className="font-semibold">Webhook URL untuk KirimDev:</p>
-          <code className="mt-1 block rounded bg-white p-2 text-xs">{webhookUrl}</code>
+          <code className="mt-1 block rounded bg-white p-2 text-xs" suppressHydrationWarning>
+            {webhookUrl}
+          </code>
         </div>
 
         <form onSubmit={handleSubmit} className="mb-6 space-y-4">
@@ -77,9 +76,9 @@ export default function Home() {
           <p className="font-semibold text-gray-700">Cara pakai:</p>
           <ol className="mt-2 list-decimal space-y-1 pl-5">
             <li>Isi <code>.env.local</code> dengan OpenRouter API Key dan KirimDev credentials.</li>
-            <li>Jalankan <code>npm run dev</code>.</li>
-            <li>Daftarkan URL webhook <code>/api/webhook</code> di dashboard KirimDev.</li>
-            <li>Chatbot otomatis membalas pesan WhatsApp masuk.</li>
+            <li>Jalankan <code>npm run dev</code>, lalu buka tunnel HTTPS seperti ngrok atau Cloudflare Tunnel.</li>
+            <li>Daftarkan URL publik <code>https://domain-kamu/api/webhook</code> di webhook subscription KirimDev.</li>
+            <li>Kirim chat ke nomor WhatsApp yang sudah terhubung di KirimDev.</li>
           </ol>
         </div>
       </div>

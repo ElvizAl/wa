@@ -2,7 +2,19 @@ const KIRIMDEV_API_KEY = process.env.KIRIMDEV_API_KEY;
 const KIRIMDEV_PHONE_NUMBER_ID = process.env.KIRIMDEV_PHONE_NUMBER_ID;
 const KIRIMDEV_API_BASE = process.env.KIRIMDEV_API_BASE || "https://api.kirimdev.com";
 
-export async function sendWhatsAppText(to: string, body: string, phoneNumberId?: string) {
+function formatWhatsAppNumber(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("+")) return trimmed;
+  if (trimmed.startsWith("0")) return `+62${trimmed.slice(1)}`;
+  return `+${trimmed}`;
+}
+
+export async function sendWhatsAppText(
+  to: string,
+  body: string,
+  phoneNumberId?: string,
+  replyToMessageId?: string
+) {
   const senderId = phoneNumberId || KIRIMDEV_PHONE_NUMBER_ID;
 
   if (!KIRIMDEV_API_KEY || !senderId) {
@@ -17,9 +29,9 @@ export async function sendWhatsAppText(to: string, body: string, phoneNumberId?:
     },
     body: JSON.stringify({
       messaging_product: "whatsapp",
-      recipient_type: "individual",
-      to,
+      to: formatWhatsAppNumber(to),
       type: "text",
+      ...(replyToMessageId ? { context: { message_id: replyToMessageId } } : {}),
       text: { body },
     }),
   });
