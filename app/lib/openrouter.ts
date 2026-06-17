@@ -1,12 +1,7 @@
-function getOpenRouterKey(): string | undefined {
-  return process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY;
-}
-
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini";
 
 export async function askOpenRouter(messages: { role: "system" | "user" | "assistant"; content: string }[]) {
-  const OPENROUTER_API_KEY = getOpenRouterKey();
-
   if (!OPENROUTER_API_KEY || OPENROUTER_API_KEY.trim() === "") {
     throw new Error("OPENROUTER_API_KEY belum diatur di environment variables (.env.local)");
   }
