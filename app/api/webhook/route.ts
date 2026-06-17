@@ -5,6 +5,7 @@ import { askOpenRouter } from "@/app/lib/openrouter";
 import { getProductByName, getStockSummary, products } from "@/app/lib/products";
 
 export const runtime = "nodejs";
+export const maxDuration = 30;
 
 type MetaTextMessage = {
   id?: string;
@@ -97,41 +98,59 @@ export async function POST(req: NextRequest) {
 }
 
 function handleMetaMessage(body: MetaWebhookPayload) {
-  const entry = body.entry?.[0];
-  const change = entry?.changes?.[0];
-  const value = change?.value;
-  const messages = value?.messages;
+  const replies: Array<{
+    from: string;
+    userText: string;
+    phoneNumberId?: string;
+    inboundMessageId?: string;
+  }> = [];
 
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return NextResponse.json({ ok: true, message: "No messages to process" });
+  for (const entry of body.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      const value = change.value;
+      const phoneNumberId = value?.metadata?.phone_number_id;
+
+      for (const message of value?.messages ?? []) {
+        if (!message.from) {
+          console.log("[Webhook] Ignored message without sender");
+          continue;
+        }
+
+        if (message.type !== "text" || !message.text?.body) {
+          console.log(`[Webhook] Ignored message type: ${message.type}`);
+          continue;
+        }
+
+        console.log(`[Webhook] Message from ${message.from}: ${message.text.body}`);
+        replies.push({
+          from: message.from,
+          userText: message.text.body,
+          phoneNumberId,
+          inboundMessageId: message.id,
+        });
+      }
+    }
   }
 
-  const metadata = value?.metadata || {};
-  const phoneNumberId = metadata.phone_number_id;
-
-  const message = messages[0];
-  const from = message.from;
-  const type = message.type;
-
-  if (!from) {
-    return NextResponse.json({ ok: true, message: "No sender" });
+  if (replies.length === 0) {
+    return NextResponse.json({ ok: true, message: "No text messages to process" });
   }
 
-  if (type !== "text" || !message.text?.body) {
-    console.log(`[Webhook] Ignored message type: ${type}`);
-    return NextResponse.json({ ok: true, message: "Unsupported message type" });
-  }
-
-  const userText = message.text.body;
-  console.log(`[Webhook] Message from ${from}: ${userText}`);
-
-  after(() => {
-    processReply(from, userText, phoneNumberId, message.id).catch((err) =>
-      console.error("[Webhook] Failed to send reply:", err)
+  after(async () => {
+    const results = await Promise.allSettled(
+      replies.map((reply) =>
+        processReply(reply.from, reply.userText, reply.phoneNumberId, reply.inboundMessageId)
+      )
     );
+
+    for (const result of results) {
+      if (result.status === "rejected") {
+        console.error("[Webhook] Failed to send reply:", result.reason);
+      }
+    }
   });
 
-  return NextResponse.json({ ok: true, message: "reply-queued" });
+  return NextResponse.json({ ok: true, message: "replies-queued", count: replies.length });
 }
 
 async function processReply(
@@ -173,7 +192,10 @@ async function generateReply(userText: string): Promise<string> {
   const aiReply = await askOpenRouter([
     { role: "system", content: systemPrompt },
     { role: "user", content: userText },
-  ]);
+  ]).catch((error) => {
+    console.error("[OpenRouter] Failed to generate reply:", error);
+    return "Maaf, bot sedang agak lambat. Untuk cek stok, ketik: cek stok [nama buah].";
+  });
 
   return aiReply;
 }

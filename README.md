@@ -10,6 +10,7 @@ Bot WhatsApp AI berbasis Next.js, OpenRouter, dan KirimDev. Aplikasi ini menerim
 ```env
 OPENROUTER_API_KEY="..."
 OPENROUTER_MODEL="openai/gpt-4o-mini"
+OPENROUTER_TIMEOUT_MS="15000"
 
 KIRIMDEV_API_KEY="..."
 KIRIMDEV_PHONE_NUMBER_ID="..."
