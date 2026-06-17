@@ -3,49 +3,99 @@ import { sendWhatsAppText } from "@/app/lib/kirimdev";
 import { askOpenRouter } from "@/app/lib/openrouter";
 import { getProductByName, getStockSummary, products } from "@/app/lib/products";
 
+// Simple in-memory dedupe cache for X-Kirim-Event-Id.
+// In production with multiple instances, use Redis or a database.
+const seenEventIds = new Map<string, number>();
+const DEDUPE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
+
+function isDuplicate(eventId: string | null): boolean {
+  if (!eventId) return false;
+  const now = Date.now();
+  const firstSeen = seenEventIds.get(eventId);
+  if (firstSeen && now - firstSeen < DEDUPE_TTL_MS) {
+    return true;
+  }
+  seenEventIds.set(eventId, now);
+  return false;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const eventId = req.headers.get("x-kirim-event-id");
+    const eventType = req.headers.get("x-kirim-event");
+    const source = req.headers.get("x-kirim-source");
 
-    console.log("[Webhook] Received payload:", JSON.stringify(body, null, 2));
+    console.log("[Webhook] Received:", { eventId, eventType, source });
 
-    // KirimDev mengirimkan payload sesuai format WhatsApp Cloud API webhook
-    const entry = body.entry?.[0];
-    const change = entry?.changes?.[0];
-    const value = change?.value;
-    const messages = value?.messages;
-
-    // Abaikan status updates dan event non-message
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return NextResponse.json({ ok: true, message: "No messages to process" });
+    if (isDuplicate(eventId)) {
+      console.log(`[Webhook] Duplicate event skipped: ${eventId}`);
+      return NextResponse.json({ ok: true, message: "duplicate-ack" });
     }
 
-    const message = messages[0];
-    const from = message.from as string;
-    const type = message.type as string;
-
-    if (!from) {
-      return NextResponse.json({ ok: true, message: "No sender" });
+    // We only handle inbound WhatsApp text messages for this bot.
+    if (source === "meta" && eventType === "message.received") {
+      return handleMetaMessage(body);
     }
 
-    if (type !== "text" || !message.text?.body) {
-      console.log(`[Webhook] Ignored message type: ${type}`);
-      return NextResponse.json({ ok: true, message: "Unsupported message type" });
+    if (source === "meta" && eventType === "message.status") {
+      console.log("[Webhook] Status update ignored");
+      return NextResponse.json({ ok: true, message: "status-ignored" });
     }
 
-    const userText = message.text.body as string;
-    console.log(`[Webhook] Message from ${from}: ${userText}`);
+    if (source === "kirim") {
+      console.log(`[Webhook] Kirimdev-native event ignored: ${eventType}`);
+      return NextResponse.json({ ok: true, message: "kirim-event-ignored" });
+    }
 
-    const reply = await generateReply(userText);
-    console.log(`[Webhook] Reply: ${reply}`);
-
-    await sendWhatsAppText(from, reply);
-
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, message: "unknown-event-ignored" });
   } catch (error) {
     console.error("[Webhook] Error:", error);
     return NextResponse.json({ ok: false, error: String(error) }, { status: 500 });
   }
+}
+
+function handleMetaMessage(body: any) {
+  const entry = body.entry?.[0];
+  const change = entry?.changes?.[0];
+  const value = change?.value;
+  const messages = value?.messages;
+
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return NextResponse.json({ ok: true, message: "No messages to process" });
+  }
+
+  const metadata = value?.metadata || {};
+  const phoneNumberId = metadata.phone_number_id as string | undefined;
+
+  const message = messages[0];
+  const from = message.from as string;
+  const type = message.type as string;
+
+  if (!from) {
+    return NextResponse.json({ ok: true, message: "No sender" });
+  }
+
+  if (type !== "text" || !message.text?.body) {
+    console.log(`[Webhook] Ignored message type: ${type}`);
+    return NextResponse.json({ ok: true, message: "Unsupported message type" });
+  }
+
+  const userText = message.text.body as string;
+  console.log(`[Webhook] Message from ${from}: ${userText}`);
+
+  // Fire-and-forget reply so we can return 200 quickly (KirimDev timeout is 10s)
+  processReply(from, userText, phoneNumberId).catch((err) =>
+    console.error("[Webhook] Failed to send reply:", err)
+  );
+
+  return NextResponse.json({ ok: true, message: "reply-queued" });
+}
+
+async function processReply(from: string, userText: string, phoneNumberId?: string) {
+  const reply = await generateReply(userText);
+  console.log(`[Webhook] Reply: ${reply}`);
+  await sendWhatsAppText(from, reply, phoneNumberId);
 }
 
 async function generateReply(userText: string): Promise<string> {
@@ -91,15 +141,7 @@ function findProductInText(text: string) {
   return undefined;
 }
 
-// Untuk verifikasi webhook KirimDev (jika diperlukan)
+// Health check / webhook verification endpoint
 export async function GET(req: NextRequest) {
-  const searchParams = req.nextUrl.searchParams;
-  const mode = searchParams.get("hub.mode");
-  const challenge = searchParams.get("hub.challenge");
-
-  if (mode === "subscribe" && challenge) {
-    return new NextResponse(challenge, { status: 200 });
-  }
-
   return NextResponse.json({ ok: true, message: "Webhook endpoint aktif" });
 }
